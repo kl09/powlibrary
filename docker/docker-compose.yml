@@ -1,0 +1,16 @@
+version: '3'
+services:
+  powserver:
+    build:
+      context: ../
+      dockerfile: docker/server.Dockerfile
+    ports:
+      - "80:80"
+    volumes:
+      - .:/opt/service/
+  powclient:
+    build:
+      context: ../
+      dockerfile: docker/client.Dockerfile
+    volumes:
+      - .:/opt/service/
