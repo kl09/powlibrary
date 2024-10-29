@@ -1,13 +1,19 @@
 package domain
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // POWTask is a proof of work task which was given to a user.
 type POWTask struct {
 	Task       string
 	Difficulty int
 	UserID     string
-	IsUsed     bool
+
+	CreatedAt  time.Time
+	ResolvedAt *time.Time
+	TTL        time.Time
 }
 
 // TasksStorage is a service that stores tasks that were given for a user.
@@ -32,4 +38,9 @@ type POWService interface {
 	Generate() (string, int, error)
 	// Validate validates a proof of work string against a hash.
 	Validate(code, hash string) error
+
+	// IncreaseDifficulty increases the difficulty of the task.
+	IncreaseDifficulty() int
+	// DecreaseDifficulty decreases the difficulty of the task.
+	DecreaseDifficulty() int
 }

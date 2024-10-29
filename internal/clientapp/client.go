@@ -1,66 +1,153 @@
 package clientapp
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
 
-	"connectrpc.com/connect"
-	v1 "github.com/kl09/powlibrary/internal/proto"
-	"github.com/kl09/powlibrary/internal/proto/protoconnect"
+	"github.com/google/uuid"
 	"github.com/kl09/powlibrary/internal/utils"
 )
 
 type ClientApp struct {
-	client protoconnect.LibraryServiceClient
-	logger *slog.Logger
+	powServerURL string
+	logger       *slog.Logger
 }
 
 func NewClientApp(
-	client protoconnect.LibraryServiceClient,
+	powServerURL string,
 	logger *slog.Logger,
 ) *ClientApp {
 	return &ClientApp{
-		client: client,
-		logger: logger,
+		powServerURL: powServerURL,
+		logger:       logger,
 	}
 }
 
 func (a *ClientApp) Run(ctx context.Context) {
 	a.logger.Info("client: running")
-	var userID = "test"
 
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-		resp, err := a.client.GenerateTask(ctx, connect.NewRequest(&v1.GenerateTaskRequest{
-			UserId: userID,
-		}))
-		if err != nil {
-			a.logger.Error(fmt.Sprintf("client: failed to generate task: %s", err))
-			continue
-		}
+	wg := sync.WaitGroup{}
 
-		// ofc, in real project it won't be called from utils.
-		hash, err := utils.GeneratePOW(ctx, resp.Msg.GetTask(), int(resp.Msg.GetDifficulty()))
-		if err != nil {
-			a.logger.Error(fmt.Sprintf("client: failed to generate PoW: %s", err))
-			continue
-		}
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			for {
+				defer wg.Done()
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
 
-		respQ, err := a.client.GetQuote(ctx, connect.NewRequest(&v1.GetQuoteRequest{
-			Task:   resp.Msg.GetTask(),
-			Hash:   hash,
-			UserId: userID,
-		}))
-		if err != nil {
-			a.logger.Error(fmt.Sprintf("client: failed to get quote: %s", err))
-			continue
-		}
-		a.logger.Info(fmt.Sprintf("got quote with hash: %s, task: %s and difficulty: %d", hash, resp.Msg.GetTask(), resp.Msg.Difficulty))
-		a.logger.Info(fmt.Sprintf("client: quote received: %s", respQ.Msg.GetQuote()))
+				userID := fmt.Sprintf("test-%s", uuid.New())
+
+				startedAt := time.Now()
+
+				task, difficulty, err := a.generateTask(ctx, userID)
+				if err != nil {
+					a.logger.Error(fmt.Sprintf("client: failed to generate task: %s", err))
+					continue
+				}
+
+				// ofc, in real project it won't be called from utils.
+				hash, err := utils.GeneratePOW(ctx, task, difficulty)
+				if err != nil {
+					a.logger.Error(fmt.Sprintf("client: failed to generate PoW: %s", err))
+					continue
+				}
+
+				quote, err := a.getQuote(ctx, task, hash, userID)
+				if err != nil {
+					a.logger.Error(fmt.Sprintf("client: failed to get quote: %s", err))
+					continue
+				}
+				a.logger.Info(fmt.Sprintf("got quote with hash: %s, task: %s and difficulty: %d for user_id: %s", hash, task, difficulty, userID))
+				a.logger.Info(fmt.Sprintf("client: quote received: %s for %f seconds", quote, time.Since(startedAt).Seconds()))
+			}
+		}()
 	}
+
+	wg.Wait()
+}
+
+func (a *ClientApp) generateTask(ctx context.Context, userID string) (task string, difficulty int, err error) {
+	req, err := http.NewRequestWithContext(
+		ctx, "POST", a.powServerURL+"/GenerateTask",
+		strings.NewReader(fmt.Sprintf(`{"user_id": "%s"}`, userID)),
+	)
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to do request: %w", err)
+	}
+	r, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", 0, fmt.Errorf("do request: %w", err)
+	}
+	defer r.Body.Close()
+
+	if r.StatusCode != 200 {
+		return "", 0, fmt.Errorf("unexpected status code: %d", r.StatusCode)
+	}
+
+	var resp struct {
+		Task       string `json:"task"`
+		Difficulty int    `json:"difficulty"`
+	}
+
+	err = json.NewDecoder(r.Body).Decode(&resp)
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return resp.Task, resp.Difficulty, nil
+}
+
+func (a *ClientApp) getQuote(ctx context.Context, task, hash, userID string) (quote string, err error) {
+	var jsonReq struct {
+		UserID string `json:"user_id"`
+		Task   string `json:"task"`
+		Hash   string `json:"hash"`
+	}
+	jsonReq.Task = task
+	jsonReq.Hash = hash
+	jsonReq.UserID = userID
+
+	b, err := json.Marshal(jsonReq)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(
+		ctx, "POST", a.powServerURL+"/GetQuote", bytes.NewReader(b),
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to do request: %w", err)
+	}
+
+	r, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("do request: %w", err)
+	}
+	defer r.Body.Close()
+
+	if r.StatusCode != 200 {
+		return "", fmt.Errorf("unexpected status code: %d", r.StatusCode)
+	}
+
+	var resp struct {
+		Quote string `json:"quote"`
+	}
+
+	err = json.NewDecoder(r.Body).Decode(&resp)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return resp.Quote, nil
 }

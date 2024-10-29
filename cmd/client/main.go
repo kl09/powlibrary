@@ -5,26 +5,20 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/kl09/powlibrary/internal/clientapp"
-	"github.com/kl09/powlibrary/internal/proto/protoconnect"
 )
 
 func main() {
 	logger := slog.With("component", "main")
 	logger.Info("booting up")
-
-	client := &http.Client{}
-	libClient := protoconnect.NewLibraryServiceClient(client, "http://powserver:80")
-
 	ctx, ctxCancel := context.WithCancelCause(context.Background())
 
 	app := clientapp.NewClientApp(
-		libClient,
+		"http://powserver:80",
 		logger,
 	)
 

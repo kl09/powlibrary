@@ -9,17 +9,34 @@ import (
 	"github.com/google/uuid"
 )
 
+const minDifficulty = 1
+
 // ProofOfWork is a service that does proof of work string validation.
 type ProofOfWork struct {
-	// TODO: difficulty can be a smart one, based on current RPS.
 	difficulty int
 }
 
 // NewProofOfWork creates a new proof of work service.
-func NewProofOfWork(difficulty int) *ProofOfWork {
+func NewProofOfWork(defaultPOWDifficulty int) *ProofOfWork {
 	return &ProofOfWork{
-		difficulty: difficulty,
+		difficulty: defaultPOWDifficulty,
 	}
+}
+
+// IncreaseDifficulty increases the difficulty of the task.
+func (p *ProofOfWork) IncreaseDifficulty() int {
+	p.difficulty++
+
+	return p.difficulty
+}
+
+// DecreaseDifficulty decreases the difficulty of the task.
+func (p *ProofOfWork) DecreaseDifficulty() int {
+	if p.difficulty > minDifficulty {
+		p.difficulty--
+	}
+
+	return p.difficulty
 }
 
 // Generate generates a task for POW.
